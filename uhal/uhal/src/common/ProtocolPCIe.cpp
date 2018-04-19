@@ -1,3 +1,4 @@
+// s7 branch
 /*
 ---------------------------------------------------------------------------
 
@@ -209,7 +210,7 @@ void PCIe::connect()
   dmaRead(mDeviceFileFPGAToHost, 0x0, 4, lValues);
 
   mNumberOfPages = lValues.at(0);
-  mPageSize = lValues.at(1);
+  mPageSize = lValues.at(1)/2;
   mIndexNextPage = lValues.at(2);
   mPublishedReplyPageCount = lValues.at(3);
 
@@ -334,7 +335,7 @@ void PCIe::read()
     while ( true ) {
       std::vector<uint32_t> lValues;
       // FIXME : Improve by simply adding dmaWrite method that takes uint32_t ref as argument (or returns uint32_t)
-      dmaRead(mDeviceFileFPGAToHost, 3, 1, lValues);
+      dmaRead(mDeviceFileFPGAToHost, 3, 8, lValues);
       lHwPublishedPageCount = lValues.at(0);
 
       if (lHwPublishedPageCount != mPublishedReplyPageCount) {
@@ -410,7 +411,14 @@ void PCIe::read()
 void PCIe::dmaRead(int aFileDescriptor, const uint32_t aAddr, const uint32_t aNrWords, std::vector<uint32_t>& aValues)
 {
   char *allocated = NULL;
-  posix_memalign((void **)&allocated, 4096/*alignment*/, 4*aNrWords + 4096);
+  uint32_t toRead=0;
+
+  if(aNrWords <= 8)
+   toRead = 32;
+  else
+   toRead = 4096; // read complete buffer
+
+  posix_memalign((void **)&allocated, 4096/*alignment*/, toRead + 4096);
   assert(allocated);
 
   /* select AXI MM address */
@@ -422,12 +430,14 @@ void PCIe::dmaRead(int aFileDescriptor, const uint32_t aAddr, const uint32_t aNr
     throw lExc;
   }
 
+  
+
   /* read data from AXI MM into buffer using SGDMA */
-  int rc = ::read(aFileDescriptor, buffer, 4*aNrWords);
+  int rc = ::read(aFileDescriptor, buffer, toRead);
   assert(rc >= 0);
   assert((rc % 4) == 0);
-  if ((rc > 0) && (size_t(rc) < 4*aNrWords)) {
-    std::cout << "Short read of " << rc << " bytes into a " << 4*aNrWords << " bytes buffer, could be a packet read?\n";
+  if ((rc > 0) && (size_t(rc) < toRead)) {
+    std::cout << "Short read of " << rc << " bytes into a " << toRead << " bytes buffer, could be a packet read?\n";
   }
 
   aValues.insert(aValues.end(), reinterpret_cast<uint32_t*>(buffer), reinterpret_cast<uint32_t*>(buffer)+ aNrWords);
@@ -452,7 +462,7 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const std::vector
 bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const uint8_t* const aPtr, const size_t aNrBytes)
 {
   assert((aNrBytes % 4) == 0);
-
+  size_t bytesToWrite = 4096;
   char *allocated = NULL;
   posix_memalign((void **)&allocated, 4096/*alignment*/, aNrBytes + 4096);
   assert(allocated);
@@ -473,8 +483,10 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const uint8_t* co
   }
 
   /* write buffer to AXI MM address using SGDMA */
-  int rc = ::write(aFileDescriptor, buffer, aNrBytes);
-  assert((rc > 0) && (size_t(rc) == aNrBytes));
+  //int rc = ::write(aFileDescriptor, buffer, aNrBytes);
+  int rc = ::write(aFileDescriptor, buffer, bytesToWrite);
+  //assert((rc > 0) && (size_t(rc) == aNrBytes));
+  assert((rc > 0) && (size_t(rc) == bytesToWrite));
 
   free(allocated);
 
@@ -485,13 +497,20 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const uint8_t* co
 bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const std::vector<std::pair<const uint8_t*, size_t> >& aData)
 {
   size_t lNrBytes = 0;
+  size_t bytesToWrite = 4096;
+
   for (size_t i = 0; i < aData.size(); i++)
     lNrBytes += aData.at(i).second;
 
   assert((lNrBytes % 4) == 0);
 
+  if (lNrBytes < 400 )  // 32 words
+     bytesToWrite = 400;
+  else
+     bytesToWrite = lNrBytes;
+
   char *allocated = NULL;
-  posix_memalign((void **)&allocated, 4096/*alignment*/, lNrBytes + 4096);
+  posix_memalign((void **)&allocated, 4096/*alignment*/, bytesToWrite + 4096);
   assert(allocated);
 
   // data to write to register address
@@ -513,9 +532,13 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const std::vector
     }
   }
 
+  
+
   /* write buffer to AXI MM address using SGDMA */
-  int rc = ::write(aFileDescriptor, buffer, lNrBytes);
-  assert((rc > 0) && (size_t(rc) == lNrBytes));
+  //int rc = ::write(aFileDescriptor, buffer, lNrBytes);
+  int rc = ::write(aFileDescriptor, buffer, bytesToWrite);
+  //assert((rc > 0) && (size_t(rc) == lNrBytes));
+  assert((rc > 0) && (size_t(rc) == bytesToWrite));
 
   free(allocated);
 
