@@ -339,7 +339,7 @@ void PCIe::read()
     while ( true ) {
       std::vector<uint32_t> lValues;
       // FIXME : Improve by simply adding dmaWrite method that takes uint32_t ref as argument (or returns uint32_t)
-      dmaRead(mDeviceFileFPGAToHost, 3, 1, lValues);
+      dmaRead(mDeviceFileFPGAToHost, 3, (mFixedSizeTransfers ? 8 : 1), lValues);
       lHwPublishedPageCount = lValues.at(0);
 
       if (lHwPublishedPageCount != mPublishedReplyPageCount) {
@@ -368,8 +368,13 @@ void PCIe::read()
   mReplyQueue.pop_front();
 
   std::vector<uint32_t> lPageContents;
-  dmaRead(mDeviceFileFPGAToHost, 4 + lPageIndexToRead * 4 * mPageSize, 1 + (lBuffers->replyCounter() >> 2), lPageContents);
-  log (Debug(), "Read " , Integer(1 + (lBuffers->replyCounter() >> 2)), " 32-bit words from address " , Integer(4 + lPageIndexToRead * 4 * mPageSize), " ... ", PacketFmt((const uint8_t*)lPageContents.data(), 4 * lPageContents.size()));
+  size_t lNrWordsToRead =  1 + (lBuffers->replyCounter() >> 2);
+  if (mFixedSizeTransfers and (lNrWordsToRead < 4))
+    lNrWordsToRead = 4;
+  else if (mFixedSizeTransfers and (lNrWordsToRead < 1024))
+    lNrWordsToRead = 1024;
+  dmaRead(mDeviceFileFPGAToHost, 4 + lPageIndexToRead * 4 * mPageSize, lNrWordsToRead, lPageContents);
+  log (Debug(), "Read " , Integer(lNrWordsToRead), " 32-bit words from address " , Integer(4 + lPageIndexToRead * 4 * mPageSize), " ... ", PacketFmt((const uint8_t*)lPageContents.data(), 4 * lPageContents.size()));
 
 
   // PART 2 : Transfer to reply buffer
@@ -415,14 +420,7 @@ void PCIe::read()
 void PCIe::dmaRead(int aFileDescriptor, const uint32_t aAddr, const uint32_t aNrWords, std::vector<uint32_t>& aValues)
 {
   char *allocated = NULL;
-  uint32_t toRead=0;
-
-  if(aNrWords <= 8)
-   toRead = 32;
-  else
-   toRead = 4096; // read complete buffer
-
-  posix_memalign((void **)&allocated, 4096/*alignment*/, toRead + 4096);
+  posix_memalign((void **)&allocated, 4096/*alignment*/, 4*aNrWords + 4096);
   assert(allocated);
 
   /* select AXI MM address */
@@ -435,11 +433,11 @@ void PCIe::dmaRead(int aFileDescriptor, const uint32_t aAddr, const uint32_t aNr
   }
 
   /* read data from AXI MM into buffer using SGDMA */
-  int rc = ::read(aFileDescriptor, buffer, toRead);
+  int rc = ::read(aFileDescriptor, buffer, 4*aNrWords);
   assert(rc >= 0);
   assert((rc % 4) == 0);
-  if ((rc > 0) && (size_t(rc) < toRead)) {
-    std::cout << "Short read of " << rc << " bytes into a " << toRead << " bytes buffer, could be a packet read?\n";
+  if ((rc > 0) && (size_t(rc) < 4*aNrWords)) {
+    std::cout << "Short read of " << rc << " bytes into a " << 4*aNrWords << " bytes buffer, could be a packet read?\n";
   }
 
   aValues.insert(aValues.end(), reinterpret_cast<uint32_t*>(buffer), reinterpret_cast<uint32_t*>(buffer)+ aNrWords);
