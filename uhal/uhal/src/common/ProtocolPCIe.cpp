@@ -1,4 +1,3 @@
-// s7 branch
 /*
 ---------------------------------------------------------------------------
 
@@ -210,7 +209,7 @@ void PCIe::connect()
   dmaRead(mDeviceFileFPGAToHost, 0x0, 4, lValues);
 
   mNumberOfPages = lValues.at(0);
-  mPageSize = lValues.at(1)/2;
+  mPageSize = std::min(uint32_t(4096)/4, lValues.at(1));
   mIndexNextPage = lValues.at(2);
   mPublishedReplyPageCount = lValues.at(3);
 
@@ -335,7 +334,7 @@ void PCIe::read()
     while ( true ) {
       std::vector<uint32_t> lValues;
       // FIXME : Improve by simply adding dmaWrite method that takes uint32_t ref as argument (or returns uint32_t)
-      dmaRead(mDeviceFileFPGAToHost, 3, 8, lValues);
+      dmaRead(mDeviceFileFPGAToHost, 3, 1, lValues);
       lHwPublishedPageCount = lValues.at(0);
 
       if (lHwPublishedPageCount != mPublishedReplyPageCount) {
@@ -429,8 +428,6 @@ void PCIe::dmaRead(int aFileDescriptor, const uint32_t aAddr, const uint32_t aNr
     log(lExc, "Offset returned by lseek, ", Integer(off), ", does not match that requested, ", Integer(4*aAddr), " (in preparation for read of ", Integer(aNrWords), " words)");
     throw lExc;
   }
-
-  
 
   /* read data from AXI MM into buffer using SGDMA */
   int rc = ::read(aFileDescriptor, buffer, toRead);
