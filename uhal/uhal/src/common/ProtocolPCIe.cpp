@@ -77,6 +77,7 @@ PCIe::PCIe ( const std::string& aId, const URI& aUri ) :
   mDeviceFileHostToFPGA(-1),
   mDeviceFileFPGAToHost(-1),
   mDeviceFileFPGAEvent(-1),
+  mFixedSizeTransfers(false),
   mUseInterrupt(false),
   mNumberOfPages(0),
   mPageSize(0),
@@ -284,6 +285,10 @@ void PCIe::write(const boost::shared_ptr<Buffers>& aBuffers)
   std::vector<std::pair<const uint8_t*, size_t> > lDataToWrite;
   lDataToWrite.push_back( std::make_pair(reinterpret_cast<const uint8_t*>(&lHeaderWord), sizeof lHeaderWord) );
   lDataToWrite.push_back( std::make_pair(aBuffers->getSendBuffer(), aBuffers->sendCounter()) );
+  if (mFixedSizeTransfers and (aBuffers->sendCounter() < 396)) {
+    std::vector<uint8_t> lPadding(400 - (4 + aBuffers->sendCounter()), 0);
+    lDataToWrite.push_back( std::make_pair(lPadding.data(), lPadding.size()) );
+  }
   dmaWrite(mDeviceFileHostToFPGA, mIndexNextPage * 4 * mPageSize, lDataToWrite);
 
   log (Debug(), "Writing " , Integer((aBuffers->sendCounter() / 4) + 1), " 32-bit words at address " , Integer(mIndexNextPage * 4 * mPageSize), " ... ", PacketFmt(lDataToWrite));
@@ -459,7 +464,7 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const std::vector
 bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const uint8_t* const aPtr, const size_t aNrBytes)
 {
   assert((aNrBytes % 4) == 0);
-  size_t bytesToWrite = 4096;
+
   char *allocated = NULL;
   posix_memalign((void **)&allocated, 4096/*alignment*/, aNrBytes + 4096);
   assert(allocated);
@@ -480,10 +485,8 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const uint8_t* co
   }
 
   /* write buffer to AXI MM address using SGDMA */
-  //int rc = ::write(aFileDescriptor, buffer, aNrBytes);
-  int rc = ::write(aFileDescriptor, buffer, bytesToWrite);
-  //assert((rc > 0) && (size_t(rc) == aNrBytes));
-  assert((rc > 0) && (size_t(rc) == bytesToWrite));
+  int rc = ::write(aFileDescriptor, buffer, aNrBytes);
+  assert((rc > 0) && (size_t(rc) == aNrBytes));
 
   free(allocated);
 
@@ -494,20 +497,13 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const uint8_t* co
 bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const std::vector<std::pair<const uint8_t*, size_t> >& aData)
 {
   size_t lNrBytes = 0;
-  size_t bytesToWrite = 4096;
-
   for (size_t i = 0; i < aData.size(); i++)
     lNrBytes += aData.at(i).second;
 
   assert((lNrBytes % 4) == 0);
 
-  if (lNrBytes < 400 )  // 32 words
-     bytesToWrite = 400;
-  else
-     bytesToWrite = lNrBytes;
-
   char *allocated = NULL;
-  posix_memalign((void **)&allocated, 4096/*alignment*/, bytesToWrite + 4096);
+  posix_memalign((void **)&allocated, 4096/*alignment*/, lNrBytes + 4096);
   assert(allocated);
 
   // data to write to register address
@@ -529,13 +525,9 @@ bool PCIe::dmaWrite(int aFileDescriptor, const uint32_t aAddr, const std::vector
     }
   }
 
-  
-
   /* write buffer to AXI MM address using SGDMA */
-  //int rc = ::write(aFileDescriptor, buffer, lNrBytes);
-  int rc = ::write(aFileDescriptor, buffer, bytesToWrite);
-  //assert((rc > 0) && (size_t(rc) == lNrBytes));
-  assert((rc > 0) && (size_t(rc) == bytesToWrite));
+  int rc = ::write(aFileDescriptor, buffer, lNrBytes);
+  assert((rc > 0) && (size_t(rc) == lNrBytes));
 
   free(allocated);
 
