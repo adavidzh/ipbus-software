@@ -103,6 +103,8 @@ PCIe::PCIe ( const std::string& aId, const URI& aUri ) :
     throw lExc;
   }
 
+  mSleepDuration = boost::chrono::microseconds(mUseInterrupt ? 0 : 50);
+
   for (NameValuePairVectorType::const_iterator lIt = aUri.mArguments.begin(); lIt != aUri.mArguments.end(); lIt++) {
     if (lIt->first == "events") {
       if (mUseInterrupt) {
@@ -115,15 +117,16 @@ PCIe::PCIe ( const std::string& aId, const URI& aUri ) :
       mDevicePathFPGAEvent = lIt->second;
       log (Info() , "PCIe client with URI ", Quote (uri()), " is configured to use interrupts");
     }
-  }
-
-  mSleepDuration = boost::chrono::microseconds(mUseInterrupt ? 0 : 50);
-
-  for (NameValuePairVectorType::const_iterator lIt = aUri.mArguments.begin(); lIt != aUri.mArguments.end(); lIt++) {
-    if (lIt->first == "sleep") {
+    else if (lIt->first == "sleep") {
       mSleepDuration = boost::chrono::microseconds(boost::lexical_cast<size_t>(lIt->second));
       log (Notice() , "PCIe client with URI ", Quote (uri()), " : Inter-poll-/-interrupt sleep duration set to ", boost::lexical_cast<size_t>(lIt->second), " us by URI 'sleep' attribute");
     }
+    else if (lIt->first == "restrict_transfer_size") {
+      mFixedSizeTransfers = true;
+      log (Notice() , "PCIe client with URI ", Quote (uri()), " : Restricting PCIe transfers to a few fixed sizes (workaround for 7-series xdma firmware bug)");
+    }
+    else
+      log (Warning() , "Unknown attribute ", Quote (lIt->first), " used in URI ", Quote(uri()));
   }
 }
 
